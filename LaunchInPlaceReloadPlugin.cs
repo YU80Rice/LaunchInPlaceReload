@@ -7,11 +7,11 @@ using UnityEngine;
 
 namespace LaunchInPlaceReload
 {
-    [BepInPlugin("com.yourname.launchinplacereload", "LaunchInPlaceReload [v1.0 正式版 / 双端适配]", "1.0.0")]
-    [BepInDependency("com.yourname.launchinventorytidy", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInPlugin("com.yu80rice.launchinplacereload", "LaunchInPlaceReload [v1.0 正式版 / 双端适配]", "1.0.0")]
+    [BepInDependency("com.yu80rice.launchinventorytidy", BepInDependency.DependencyFlags.SoftDependency)]
     public class LaunchInPlaceReloadPlugin : BaseUnityPlugin
     {
-        public const string HARMONY_ID = "com.yourname.launchinplacereload";
+        public const string HARMONY_ID = "com.yu80rice.launchinplacereload";
 
         public static LaunchInPlaceReloadPlugin Instance { get; private set; }
 
