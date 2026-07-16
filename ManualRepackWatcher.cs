@@ -1,4 +1,3 @@
-using LaunchMultiplayerNet;
 using SDG.Unturned;
 using UnityEngine;
 
@@ -13,9 +12,11 @@ namespace LaunchInPlaceReload
     ///   - 双击换弹键（ΔT ≤ 0.3s）-> 触发一键压弹（功能 B），原版换弹仍照常执行
     ///   - 双击触发后清空时间戳，防止连击多重触发
     ///
-    /// 双端自适应：
-    ///   - Provider.isServer == true（房主）：直接执行 RepackFromAmmoBoxes
-    ///   - Provider.isServer == false（客机）：通过 P2P 通道 ModChannels.RepackAmmo 发请求
+    /// v2.0 架构（2026-07-14 重构）：
+    /// - 弃用 listen server + SteamNetworking P2P，改用 U3DS dedicated server + vanilla SteamChannel
+    /// - 房主 Unturned 客户端 = 普通客户端，请求统一走 AmmoRepackNetwork.SendRepackRequest -> U3DS
+    /// - 删除 Poll（vanilla SteamChannel 自动路由）
+    /// - 删除 Provider.isServer 分支（房主也是客户端，统一发请求给 U3DS）
     /// </summary>
     public class ManualRepackWatcher : MonoBehaviour
     {
@@ -51,16 +52,6 @@ namespace LaunchInPlaceReload
                 _updateEntered = true;
                 LaunchInPlaceReloadPlugin.Instance?.LogInfo(
                     "[RepackB] ManualRepackWatcher.Update() 第一次执行");
-            }
-
-            try
-            {
-                // 必须每帧驱动 P2P 轮询（房主收请求，客机无动作但调用安全）
-                ModP2PTransport.Poll();
-            }
-            catch (System.Exception e)
-            {
-                LaunchInPlaceReloadPlugin.Instance?.LogError("[RepackB] ModP2PTransport.Poll() 异常: " + e);
             }
 
             // 启动后第一次 Update 时打印当前换弹键绑定
@@ -107,18 +98,8 @@ namespace LaunchInPlaceReload
 
                 try
                 {
-                    if (Provider.isServer)
-                    {
-                        // 房主：直接执行
-                        AmmoRepackService.RepackFromAmmoBoxes(player);
-                        LaunchInPlaceReloadPlugin.Instance?.LogInfo(
-                            "[RepackB] 房主本地：已执行压弹");
-                    }
-                    else
-                    {
-                        // 客机：发请求包给服务器
-                        AmmoRepackNetwork.SendRepackRequest();
-                    }
+                    // 统一走网络路径：客户端 -> U3DS 服务器 -> 自动事件同步回客户端
+                    AmmoRepackNetwork.SendRepackRequest();
                 }
                 catch (System.Exception e)
                 {

@@ -64,21 +64,23 @@ namespace LaunchInPlaceReload
         ///
         /// 遍历玩家背包内所有未满弹匣，找到的兼容弹药源的 amount 转移到弹匣中。
         /// 弹药源 amount 归零且 ShouldDeleteAtZeroAmount=true 时自动删除。
+        ///
+        /// 返回值：成功压入的子弹总数（供调用方决定是否显示 toast / 网络回包）。
         /// </summary>
-        public static void RepackFromAmmoBoxes(Player player)
+        public static int RepackFromAmmoBoxes(Player player)
         {
             if (player == null)
             {
                 LaunchInPlaceReloadPlugin.Instance?.LogWarning(
                     "[RepackB] player == null，跳过");
-                return;
+                return 0;
             }
             PlayerInventory inv = player.inventory;
             if (inv == null)
             {
                 LaunchInPlaceReloadPlugin.Instance?.LogWarning(
                     "[RepackB] player.inventory == null，跳过");
-                return;
+                return 0;
             }
 
             // 1) 扫描 page 2..6，收集未满弹匣 + 所有可堆叠物品（潜在弹药源）
@@ -147,7 +149,7 @@ namespace LaunchInPlaceReload
             {
                 // LaunchInPlaceReloadPlugin.Instance?.LogInfo(
                 //     "[RepackB] 扫描完毕：背包内无未满弹匣，跳过");
-                return;
+                return 0;
             }
 
             // LaunchInPlaceReloadPlugin.Instance?.LogInfo(
@@ -266,7 +268,7 @@ namespace LaunchInPlaceReload
             {
                 // LaunchInPlaceReloadPlugin.Instance?.LogInfo(
                 //     "[RepackB] 未发生转移：未满弹匣的兼容弹药源在背包中均不存在");
-                return;
+                return 0;
             }
 
             // 3) 应用 amount 更新（不引起索引位移）
@@ -288,12 +290,8 @@ namespace LaunchInPlaceReload
             // LaunchInPlaceReloadPlugin.Instance?.LogInfo(
             //     $"[RepackB] 共压弹 {totalTransferred} 发，删除空弹药源 {deletionsByPage.Count} 个页条目");
 
-            // 屏幕中上方 Toast 提示（仅本地执行时显示，房主路径）
-            if (Provider.isServer)
-            {
-                RepackToast.Show(
-                    $"<b><color=#5ce65c>一键压弹：成功压入 {totalTransferred} 发子弹</color></b>");
-            }
+            // toast 提示改由调用方决定（房主本地显示 / U3DS 通过网络回包给发起客机）
+            return totalTransferred;
         }
 
         // ─────────────────────────────────────────────────────────────

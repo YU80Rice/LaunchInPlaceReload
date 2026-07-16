@@ -2,14 +2,48 @@
 
 > Unturned 一键压弹模组 · BepInEx 5 插件
 > 双击 R 键从弹药箱给未满弹匣压弹，换弹时旧弹匣原位回背包，与 LaunchInventoryTidy 软联动实现"整理后自动合并同 ID 弹匣"。
+>
+> **当前版本：v2.0.0（2026-07-16 重构版）** · 单机 + 联机（dedicated server）双适配 · 仅依赖 LaunchMultiplayerNet 前置网络层
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![.NET](https://img.shields.io/badge/.NET%20Framework-4.7.2-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Unturned](https://img.shields.io/badge/Unturned-3.x-59B200?logo=steam)](https://store.steampowered.com/app/304930/Unturned/)
 [![BepInEx](https://img.shields.io/badge/BepInEx-5-FF7B00?logo=nuget)](https://github.com/BepInEx/BepInEx)
 [![Harmony](https://img.shields.io/badge/Harmony-2-blue)](https://github.com/pardeike/Harmony)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](./CHANGELOG.md)
 
 🌐 **开源仓库**：[github.com/YU80Rice/LaunchInPlaceReload](https://github.com/YU80Rice/LaunchInPlaceReload)
+
+---
+
+## 🆕 v2.0.0 重构声明
+
+v2.0.0 是一次大版本更新，专注于**架构鲁棒性**与**双端适配正确性**。v1.x 系列在 BepInEx 5.4.22 + LaunchInventoryTidy v1.4 环境下存在致命缺陷：`TidyHook` 用 `AccessTools.Method` 不指定参数类型查找 `TidyAllPlayerPages`，但 LaunchInventoryTidy v1.4 同时存在 3 参 + 2 参两个重载，触发 `AmbiguousMatchException`，BepInEx 5.4.22 静默吞掉 Awake 异常，导致整个插件完全不初始化（双击 R 与 TidyHook 同时失效）。
+
+### 重构核心
+
+| 改动 | v1.x | v2.0.0 |
+|---|---|---|
+| TidyHook 方法查找 | `AccessTools.Method(type, name)` 遇多重载抛 `AmbiguousMatchException` | `GetMethods(AccessTools.all).Where(name==...).FirstOrDefault()` 反射枚举，优先选首个参数为 `PlayerInventory` 的版本 |
+| Awake 错误隔离 | 4 子步骤无 try-catch，任一失败吞掉整个 Awake | PatchAll / TidyHook / DontDestroyOnLoad / 网络层 4 子步骤各自独立 try-catch |
+| LaunchMultiplayerNet 依赖 | 隐式（靠 BepInEx 字母序加载） | 显式 `[BepInDependency(LaunchMultiplayerNetPlugin.Guid, HardDependency)]` |
+| 联机压弹 toast | 服务器端 `if (Provider.isServer) RepackToast.Show` 在 U3DS headless 环境永不显示 | 新增服务器 -> 客机 `RepackSuccess` 回包（byte 11 + int32 totalTransferred），由发起方客户端本地显示 toast |
+| 单机 + 联机双路径 | 双分支但联机路径不通 | 房主 `Provider.isServer=true` 本地执行 + 本地 toast；客机走网络 -> U3DS 执行 -> 回包 -> 客户端 toast |
+
+### 单机 + 联机双适配声明
+
+| 部署场景 | 行为 |
+|---|---|
+| **单机 Unturned**（无 U3DS） | `Provider.isServer=true`，双击 R 本地执行压弹 + 本地 toast |
+| **dedicated server 联机**（U3DS） | 客户端 `Provider.isServer=false`，双击 R 发请求到 U3DS，U3DS 执行 + 回包，客户端显示 toast |
+| **BepInEx 部署** | 只要把 `LaunchInPlaceReload.dll` + `LaunchMultiplayerNet.dll` 放入 `BepInEx/plugins/` 即可，无需启动器 |
+
+### 与前置模组的关系
+
+- **LaunchMultiplayerNet**（硬依赖）：提供 Channel 101 网络通信基建，**必装**。仓库：[github.com/YU80Rice/LaunchMultiplayerNet](https://github.com/YU80Rice/LaunchMultiplayerNet)
+- **LaunchInventoryTidy**（软依赖）：整理后自动合并同 ID 弹匣（功能 A 附属），**可选但强烈推荐**。仓库：[github.com/YU80Rice/LaunchInventoryTidy](https://github.com/YU80Rice/LaunchInventoryTidy)
+
+完整更新日志见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ---
 
@@ -21,7 +55,7 @@
 
 | 依赖 | 版本 | 仓库 | 用途 |
 |---|---|---|---|
-| **LaunchMultiplayerNet** | **v1.1.1+** | [github.com/YU80Rice/LaunchMultiplayerNet](https://github.com/YU80Rice/LaunchMultiplayerNet) | P2P 双端自适应网络传输层（本插件独占 Channel 101） |
+| **LaunchMultiplayerNet** | **v3.2+**（硬依赖） | [github.com/YU80Rice/LaunchMultiplayerNet](https://github.com/YU80Rice/LaunchMultiplayerNet) | 双端自适应网络传输层（本插件独占 Channel 101，使用 `ITransportConnection + MOD magic` Harmony patch 架构） |
 | BepInEx | 5.x | [github.com/BepInEx/BepInEx](https://github.com/BepInEx/BepInEx) | 模组加载器 |
 | Harmony | 2.x | [github.com/pardeike/Harmony](https://github.com/pardeike/Harmony) | 运行时方法注入 |
 | Unturned | 3.x | [store.steampowered.com/app/304930](https://store.steampowered.com/app/304930/Unturned/) | 宿主游戏 |
@@ -40,10 +74,11 @@
 
 ### 🤝 与 LaunchInventoryTidy 的软依赖关系
 
-本插件通过 BepInEx 的 `[BepInDependency(SoftDependency)]` 机制声明对 LaunchInventoryTidy 的软依赖：
+本插件通过 BepInEx 的 `[BepInDependency]` 机制声明双依赖：**LaunchMultiplayerNet 硬依赖**（必装）+ **LaunchInventoryTidy 软依赖**（可选）：
 
 ```csharp
-[BepInPlugin("com.yu80rice.launchinplacereload", ...)]
+[BepInPlugin("com.yu80rice.launchinplacereload", "LaunchInPlaceReload [v2.0.0 重构 / 双端适配]", "2.0.0")]
+[BepInDependency(LaunchMultiplayerNetPlugin.Guid, BepInDependency.DependencyFlags.HardDependency)]
 [BepInDependency("com.yu80rice.launchinventorytidy", BepInDependency.DependencyFlags.SoftDependency)]
 public class LaunchInPlaceReloadPlugin : BaseUnityPlugin { ... }
 ```
@@ -55,17 +90,22 @@ public class LaunchInPlaceReloadPlugin : BaseUnityPlugin { ... }
 | ✅ 已安装 | 整理完毕后自动调用 `AmmoRepackService.MergeSameIdMagazines`，合并同 ID 弹匣的子弹（功能 A 附属） |
 | ❌ 未安装 | 跳过功能 A 附属，仅保留功能 B（双击 R 键独立压弹），不影响本插件独立运行 |
 
-**软依赖实现机制**（`Patches/TidyServicePostfixPatch.cs`）：
+**软依赖实现机制**（`Patches/TidyServicePostfixPatch.cs`，v2.0.0 重构）：
 
 ```csharp
-var tidyServiceType = AccessTools.TypeByName("LaunchInventoryTidy.ManualTidyService");
-if (tidyServiceType == null) {
-    // LaunchInventoryTidy 未安装，跳过功能 A 附属
-    return;
-}
-var targetMethod = AccessTools.Method(tidyServiceType, "TidyAllPlayerPages", ...);
+// v2.0.0：反射枚举所有 TidyAllPlayerPages 重载，优先选首个参数为 PlayerInventory 的版本
+// 兼容 LaunchInventoryTidy v1.0~v1.3（2 参）+ v1.4+（3 参 + 2 参共存）
+var candidates = tidyServiceType.GetMethods(AccessTools.all)
+    .Where(m => m.Name == "TidyAllPlayerPages")
+    .ToList();
+var targetMethod = candidates.FirstOrDefault(m =>
+    m.GetParameters().Length >= 1 &&
+    m.GetParameters()[0].ParameterType == typeof(PlayerInventory));
+// Postfix 通过参数名 inv 注入，与原方法参数数量无关
 harmony.Patch(targetMethod, postfix: new HarmonyMethod(...Postfix_TidyAllPlayerPages));
 ```
+
+> ⚠️ **v1.x 教训**：之前用 `AccessTools.Method(type, "TidyAllPlayerPages")` 不指定参数类型，在 LaunchInventoryTidy v1.4（同时有 3 参 + 2 参重载）下抛 `AmbiguousMatchException`，BepInEx 5.4.22 静默吞掉整个 Awake，导致插件完全不初始化。v2.0.0 改用反射枚举 + 错误隔离根除此问题。
 
 ### 📡 通道占用声明
 
@@ -75,11 +115,14 @@ harmony.Patch(targetMethod, postfix: new HarmonyMethod(...Postfix_TidyAllPlayerP
 public const int RepackAmmo = 101;  // ← 本插件独占
 ```
 
-子消息类型（`EModMessage`）：
+子消息类型（`EModMessage` + 本插件内部 byte 约定）：
 
 | 子消息 | 值 | 方向 | 用途 |
 |---|---|---|---|
-| `RequestRepackAmmo` | `10` | 客机 -> 服务器 | 请求执行全背包压弹（无业务字段） |
+| `RequestRepackAmmo`（`EModMessage`） | `10` | 客机 -> 服务器 | 请求执行全背包压弹（无业务字段） |
+| `REPACK_SUCCESS`（本插件内部 byte 约定） | `11` | 服务器 -> 客机 | 压弹完成回包（含 int32 totalTransferred），由发起方客户端本地显示 toast |
+
+> 💡 **设计说明**：`REPACK_SUCCESS = 11` 不写入 `LaunchMultiplayerNet.EModMessage` 枚举，避免对前置库做任何修改。数值 11 与 EModMessage 现有值（10/20/21）不冲突。
 
 **通道分配规则**：其他模组请从 Channel 103 起分配，详见 [LaunchMultiplayerNet 仓库的 `ModChannels.cs`](https://github.com/YU80Rice/LaunchMultiplayerNet/blob/main/ModChannels.cs)。
 
@@ -160,7 +203,7 @@ LaunchInPlaceReload/
 │   ├── UseableGunReceiveAttachMagazinePatch.cs  # 换弹原位替换
 │   ├── ForceAddItemPatch.cs                      # 物品强制添加 Patch
 │   └── TidyServicePostfixPatch.cs                # 软依赖 LaunchInventoryTidy 的 Postfix
-├── Properties/AssemblyInfo.cs            # 程序集元数据 v1.0.0.0
+├── Properties/AssemblyInfo.cs            # 程序集元数据 v2.0.0.0
 ├── LICENSE                               # MIT
 ├── README.md                             # 本文件
 ├── CHANGELOG.md                          # 版本演进

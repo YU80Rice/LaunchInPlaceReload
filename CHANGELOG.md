@@ -6,6 +6,87 @@
 
 ---
 
+## [2.0.0] - 2026-07-16 · 大版本重构（Awake 错误隔离 + TidyHook 多签名自适应 + 联机 toast 修复）
+
+### 🎯 重构动机
+
+v1.x 系列在 BepInEx 5.4.22 + LaunchInventoryTidy v1.4 环境下存在致命缺陷：插件完全不初始化，双击 R 与 TidyHook 同时失效。
+
+**根因**：`TidyServicePostfixPatch.TryRegister` 调用 `AccessTools.Method(type, "TidyAllPlayerPages")` 不指定参数类型，但 LaunchInventoryTidy v1.4 同时存在两个重载（3 参 `(PlayerInventory, bool, TidyMode)` + 2 参 `(bool, TidyMode)`），AccessTools 找到多个匹配抛 `AmbiguousMatchException`。BepInEx 5.4.22 静默吞掉 plugin Awake 异常（LogOutput.log 不打印），Awake 中途终止，`ModTransport.Initialize` / `AmmoRepackNetwork.RegisterHandlers` 全部未执行。诊断关键：查 Player.log 而非 LogOutput.log 才能看到完整堆栈。
+
+### ✨ 主要改动
+
+#### 1. TidyHook 多签名自适应
+
+- **v1.x**：`AccessTools.Method(tidyServiceType, "TidyAllPlayerPages")` 不指定参数类型，遇多重载抛 `AmbiguousMatchException`
+- **v2.0.0**：改用 `tidyServiceType.GetMethods(AccessTools.all).Where(m => m.Name == "TidyAllPlayerPages").FirstOrDefault(...)` 反射枚举所有重载，优先选首个参数为 `PlayerInventory` 的版本
+- **兼容性**：自动适配 LaunchInventoryTidy v1.0~v1.3（2 参 `(PlayerInventory, bool)`）和 v1.4+（3 参 `(PlayerInventory, bool, TidyMode)` + 2 参 `(bool, TidyMode)` 共存）
+- **可观测性**：`DescribeMethod` 日志输出实际 patch 的签名，便于未来签名变更时定位
+
+#### 2. Awake 错误隔离架构
+
+v1.x 的 Awake 4 个子步骤无 try-catch，任一失败吞掉整个 Awake。v2.0.0 重构为各自独立 try-catch：
+
+```csharp
+private void Awake()
+{
+    Instance = this;
+    try { /* 步骤 1：Harmony PatchAll */ } catch (Exception e) { Logger.LogError(...); }
+    try { /* 步骤 2：TidyServicePostfixPatch.TryRegister */ } catch (Exception e) { Logger.LogError(...); }
+    try { /* 步骤 3：DontDestroyOnLoad */ } catch (Exception e) { Logger.LogError(...); }
+    try { /* 步骤 4：ModTransport.Initialize + AmmoRepackNetwork.RegisterHandlers */ } catch (Exception e) { Logger.LogError(...); }
+    Logger.LogInfo("LaunchInPlaceReload v2.0.0 已加载");
+}
+```
+
+任一子步骤失败只 LogError，不阻止其他子步骤。例如 TidyHook 失败时，功能 B（双击 R 压弹）仍能正常工作。
+
+Postfix 内 `MergeSameIdMagazines` 也加 try-catch，防止整理过程异常污染 LaunchInventoryTidy 主流程。
+
+#### 3. 显式 LaunchMultiplayerNet 硬依赖
+
+- **v1.x**：未声明 `[BepInDependency(LaunchMultiplayerNetPlugin.Guid)]`，靠 BepInEx 字母序加载（`LaunchMultiplayerNet` < `LaunchInPlaceReload` 碰巧对）
+- **v2.0.0**：显式 `[BepInDependency(LaunchMultiplayerNetPlugin.Guid, BepInDependency.DependencyFlags.HardDependency)]`，避免未来重命名导致的加载顺序问题
+
+#### 4. 联机压弹 toast 修复
+
+- **v1.1.x 问题**：`RepackFromAmmoBoxes` 末尾 `if (Provider.isServer) RepackToast.Show`，但 U3DS 是 headless 服务器无 `PlayerUI`，toast 永不显示；发起方客机也没收到任何回包
+- **v2.0.0 修复**：
+  - `RepackFromAmmoBoxes` 改返回 `int totalTransferred`，去掉本地 toast 调用
+  - 新增服务器 -> 客机 `REPACK_SUCCESS = 11` 回包（byte 标识 + int32 totalTransferred，本插件内部约定不写入 LaunchMultiplayerNet 的 EModMessage 枚举）
+  - U3DS 执行完压弹后通过 `ModTransport.SendToClient(sender, ...)` 回发
+  - 发起方客户端 `HandleRepackSuccessFromServer` 收到后本地调 `RepackToast.Show`
+
+#### 5. 单机 + 联机双路径
+
+| 部署场景 | 行为 |
+|---|---|
+| 单机 Unturned（`Provider.isServer=true`） | Plugin.Update 双击检测 -> 本地 `RepackFromAmmoBoxes` -> 本地 `RepackToast.Show` |
+| dedicated server 联机（`Provider.isServer=false`） | Plugin.Update 双击检测 -> `AmmoRepackNetwork.SendRepackRequest` -> U3DS 执行 -> `SendToClient` 回包 -> 客户端 `HandleRepackSuccessFromServer` -> `RepackToast.Show` |
+
+### 🔧 BepInEx 5.4.22 静默吞 Awake 异常陷阱
+
+本次重构发现并记录了一个跨插件通用的陷阱：
+
+- **症状**：plugin 在 BepInEx Chainloader 加载时只输出 `[BepInEx] Loading [PluginName]` 横幅，没有任何 plugin 自身日志（既无 Info 也无 Error/Warning），plugin 完全不工作
+- **根因**：BepInEx 5.4.22 调用 plugin.Awake 时如果抛异常，LogOutput.log 不打印异常信息，但 Unity 的 `Application.LogExceptionException` 会完整写入 Player.log
+- **诊断方法**：查 Player.log（`%USERPROFILE%/AppData/LocalLow/Smartly Dressed Games/Unturned/Player.log`），grep `Exception|Error|MissingMethod|TypeLoad|Harmony` 即可定位
+- **通用教训**：plugin Awake 必须每个子步骤独立 try-catch；`AccessTools.Method` 不指定参数类型遇多重载抛 `AmbiguousMatchException`（不是返回 null）
+
+### 📦 部署变更
+
+- **单文件部署**：v2.0.0 不修改 LaunchMultiplayerNet，仅升级 `LaunchInPlaceReload.dll` 单文件即可
+- **前置库版本要求**：LaunchMultiplayerNet v3.2+（`ITransportConnection + MOD magic` 架构）
+- **兼容性**：保留 `EModMessage.RequestRepackAmmo = 10` 协议字段，v1.x 客户端可与 v2.0.0 服务器互通（但 v1.x 客户端无 toast 显示）
+
+### 🎯 三大铁规（保持不变）
+
+1. **检测到蓝图自动填入，无蓝图直接跳过**（仅处理含 `FillTargetItem` 蓝图的弹匣）
+2. **仅处理背包内容**（page 2..6 = SLOTS..PANTS），跳过装备槽/储物箱/区域
+3. **功能 A 是一键整理附属；功能 B 是本模组独立热键**
+
+---
+
 ## [1.0.0] - 2026-07-14 · 首次开源发布
 
 ### 🎉 里程碑

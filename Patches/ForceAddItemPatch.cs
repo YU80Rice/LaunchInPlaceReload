@@ -33,6 +33,13 @@ namespace LaunchInPlaceReload.Patches
             ItemAsset asset = item.GetAsset();
             if (asset == null) return true;
 
+            // 尺寸安全守门员：仅当旧弹匣（item）与新弹匣（slot）物理尺寸完全一致时，
+            // 才执行 1to1 坐标原位替换；尺寸不一致则退化为原版 tryFindSpace 空间检测。
+            if (asset.size_x != slotSizeX || asset.size_y != slotSizeY)
+            {
+                return true;
+            }
+
             // 优先使用记录的新弹匣 rot
             byte rot = slotRot;
             bool fits = __instance.checkSpaceEmpty(page, x, y, asset.size_x, asset.size_y, rot);
